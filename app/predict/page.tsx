@@ -7,7 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Zap, Leaf, CheckCircle, ArrowRight, Loader2, Sun, TrendingUp, Info, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useDashboard } from "@/contexts/DashboardContext";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Cell } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, ReferenceLine, Cell } from 'recharts';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 export default function PredictPage() {
     const { predictionData, setPredictionData } = useDashboard();
@@ -56,7 +57,9 @@ export default function PredictPage() {
             const data = await response.json();
 
             // --- ⚡ FRONTEND LOGIC START ⚡ ---
-            const dailyKwh = data.prediction || 0;
+            // In solar mode, 'prediction' is net usage, 'consumption' is gross usage.
+            // We want gross usage for bill calculation if ignoring solar.
+            const dailyKwh = data.consumption || data.prediction || 0;
             const monthlyKwh = dailyKwh * 30;
             const estimatedBill = calculateBill(monthlyKwh);
 
@@ -82,8 +85,14 @@ export default function PredictPage() {
             }
             // --- LOGIC END ---
 
+            // Recalculate status based on prediction and threshold to ensure consistency
+            const threshold = data.threshold || 20; // Default threshold if missing
+            const calculatedStatus = dailyKwh > threshold ? "CRITICAL" : "Safe";
+
             setPredictionData({
                 ...data,
+                prediction: dailyKwh, // Override API prediction with gross daily usage
+                status: calculatedStatus, // Override API status with calculated one
                 bill: estimatedBill,
                 monthly_kwh: monthlyKwh,
                 suggestions: newSuggestions
@@ -177,7 +186,21 @@ export default function PredictPage() {
                                         </select>
                                     </div>
                                     <div className="space-y-2">
-                                        <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">Peak Usage (kWh)</label>
+                                        <div className="flex items-center gap-2">
+                                            <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">Peak Hour Usage (kWh)</label>
+                                            <TooltipProvider>
+                                                <Tooltip>
+                                                    <TooltipTrigger asChild>
+                                                        <span className="cursor-help text-gray-400 hover:text-gray-600">
+                                                            <Info className="h-4 w-4" />
+                                                        </span>
+                                                    </TooltipTrigger>
+                                                    <TooltipContent className="bg-slate-900 text-white border-slate-800">
+                                                        <p className="max-w-xs">Estimated energy consumption during peak hours (8:00 AM - 10:00 PM). Higher usage during these times may increase costs.</p>
+                                                    </TooltipContent>
+                                                </Tooltip>
+                                            </TooltipProvider>
+                                        </div>
                                         <Input
                                             type="number"
                                             step="0.1"
@@ -329,7 +352,7 @@ export default function PredictPage() {
                                                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
                                                 <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12 }} />
                                                 <YAxis axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 10 }} />
-                                                <Tooltip
+                                                <RechartsTooltip
                                                     cursor={{ fill: 'transparent' }}
                                                     contentStyle={{ borderRadius: '8px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
                                                 />
@@ -364,7 +387,7 @@ export default function PredictPage() {
                                 Estimated Bill & Smart Advice
                             </CardTitle>
                             <CardDescription>
-                                Based on TNB Tariff A (Domestic) rates.
+                                Based on TNB Regulatory Period 4 (RP4) 2025 rates.
                             </CardDescription>
                         </CardHeader>
                         <CardContent className="grid md:grid-cols-2 gap-8">
@@ -426,7 +449,7 @@ export default function PredictPage() {
                     </Card>
                 </div>
             </div>
-        </div>
+        </div >
     );
 }
 
@@ -476,39 +499,28 @@ function AlertBox({ type, title, message, icon: Icon }: any) {
     );
 }
 
-// Calculation Logic (Malaysian Domestic Tariff)
+// Calculation Logic (Malaysian RP4 Tariff - Effective July 2025)
 function calculateBill(monthlyKwh: number) {
-    let total = 0;
-    let remainder = monthlyKwh;
+    if (monthlyKwh <= 0) return 3.00; // Minimum charge fallback
 
-    // Tier 1 (1 - 200 kWh)
-    if (remainder > 0) {
-        const block = Math.min(remainder, 200);
-        total += block * 0.218;
-        remainder -= block;
+    // 1. Energy Charge
+    let energyCharge = 0;
+    if (monthlyKwh <= 1500) {
+        energyCharge = monthlyKwh * 0.2703;
+    } else {
+        energyCharge = (1500 * 0.2703) + ((monthlyKwh - 1500) * 0.3703);
     }
-    // Tier 2 (201 - 300 kWh)
-    if (remainder > 0) {
-        const block = Math.min(remainder, 100);
-        total += block * 0.334;
-        remainder -= block;
-    }
-    // Tier 3 (301 - 600 kWh)
-    if (remainder > 0) {
-        const block = Math.min(remainder, 300);
-        total += block * 0.516;
-        remainder -= block;
-    }
-    // Tier 4 (601 - 900 kWh)
-    if (remainder > 0) {
-        const block = Math.min(remainder, 300);
-        total += block * 0.546;
-        remainder -= block;
-    }
-    // Tier 5 (> 900 kWh)
-    if (remainder > 0) {
-        total += remainder * 0.571;
-    }
+
+    // 2. Capacity Charge (4.55 sen/kWh)
+    const capacityCharge = monthlyKwh * 0.0455;
+
+    // 3. Network Charge (12.85 sen/kWh)
+    const networkCharge = monthlyKwh * 0.1285;
+
+    // 4. Retail Charge (RM10, waived if < 600kWh)
+    const retailCharge = monthlyKwh < 600 ? 0 : 10.00;
+
+    const total = energyCharge + capacityCharge + networkCharge + retailCharge;
 
     // Minimum Charge RM 3.00
     return Math.max(total, 3.00);
