@@ -82,6 +82,10 @@ Follow these steps to get the project running on your local machine.
 
 ## 🤝 Contributing
 
+AI MODEL TRAINING PROCESS REFERENCES REFER TO
+
+https://github.com/csyee1009/C1G8_Snow-White-and-4-Dwarf_AIMODEL
+
 Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## 📄 License
